@@ -493,15 +493,17 @@ class _AICompanionPageState extends State<AICompanionPage> with WidgetsBindingOb
 
   @override
   Widget build(BuildContext context) {
-    final screenHeight = MediaQuery.of(context).size.height;
+    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
 
     return Scaffold(
       backgroundColor: const Color(0xFFEAF6FB),
+      resizeToAvoidBottomInset: true,
       body: SafeArea(
         child: Column(
           children: [
-            SizedBox(
-              height: screenHeight / 9,
+            // ✅ Header：自適應高度，不再用 screenHeight/9（避免 1~2px overflow）
+            Padding(
+              padding: const EdgeInsets.only(top: 6, bottom: 8),
               child: Stack(
                 children: [
                   // 左上返回鍵
@@ -509,7 +511,11 @@ class _AICompanionPageState extends State<AICompanionPage> with WidgetsBindingOb
                     top: 0,
                     left: 0,
                     child: IconButton(
-                      icon: const Icon(Icons.home_rounded, color: Color(0xFF5B8EFF), size: 30),
+                      icon: const Icon(
+                        Icons.home_rounded,
+                        color: Color(0xFF5B8EFF),
+                        size: 30,
+                      ),
                       onPressed: () {
                         if (Navigator.canPop(context)) {
                           Navigator.pop(context);
@@ -519,17 +525,16 @@ class _AICompanionPageState extends State<AICompanionPage> with WidgetsBindingOb
                   ),
 
                   // 中間 LOGO + 標題
-                  Align(
-                    alignment: Alignment.center,
+                  Center(
                     child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
+                      mainAxisSize: MainAxisSize.min, // ✅ 重要：不硬撐高度
                       children: [
                         Image.asset('assets/images/memory_icon.png', width: 60),
                         const SizedBox(height: 4),
                         const Text(
                           'AI 陪伴',
                           style: TextStyle(
-                            fontSize: 27, // ✅ 放大
+                            fontSize: 27,
                             fontWeight: FontWeight.bold,
                             color: Color(0xFF5B8EFF),
                           ),
@@ -540,6 +545,7 @@ class _AICompanionPageState extends State<AICompanionPage> with WidgetsBindingOb
                 ],
               ),
             ),
+
             Expanded(
               child: Container(
                 decoration: const BoxDecoration(
@@ -550,15 +556,18 @@ class _AICompanionPageState extends State<AICompanionPage> with WidgetsBindingOb
                   controller: _scrollController,
                   padding: const EdgeInsets.all(16),
                   itemCount: _messages.length,
-                  itemBuilder: (context, index) => _buildMessageBubble(_messages[index]),
+                  itemBuilder: (context, index) =>
+                      _buildMessageBubble(_messages[index]),
                 ),
               ),
             ),
+
             if (_isLoading)
               const Padding(
                 padding: EdgeInsets.all(8),
                 child: CircularProgressIndicator(),
               ),
+
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
               child: FutureBuilder<List<Widget>>(
@@ -572,8 +581,10 @@ class _AICompanionPageState extends State<AICompanionPage> with WidgetsBindingOb
                 },
               ),
             ),
+
+            // ✅ 輸入區：加上 bottomInset，鍵盤彈起不會擠爆
             Padding(
-              padding: const EdgeInsets.fromLTRB(12, 0, 12, 16),
+              padding: EdgeInsets.fromLTRB(12, 0, 12, 16 + bottomInset),
               child: Row(
                 children: [
                   Expanded(
@@ -585,14 +596,17 @@ class _AICompanionPageState extends State<AICompanionPage> with WidgetsBindingOb
                         counterText: '',
                         filled: true,
                         fillColor: Colors.white,
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 12,
+                        ),
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(12),
                           borderSide: BorderSide.none,
                         ),
                       ),
                       onSubmitted: _sendMessage,
-                      style: const TextStyle(fontSize: 18), // ✅ 放大
+                      style: const TextStyle(fontSize: 18),
                     ),
                   ),
                   const SizedBox(width: 8),
@@ -614,7 +628,7 @@ class _AICompanionPageState extends State<AICompanionPage> with WidgetsBindingOb
                   ),
                 ],
               ),
-            )
+            ),
           ],
         ),
       ),

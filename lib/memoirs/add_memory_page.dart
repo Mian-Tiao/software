@@ -366,142 +366,151 @@ class _AddMemoryDialogState extends State<AddMemoryDialog> {
     final bottomInset = MediaQuery.of(context).viewInsets.bottom;
 
     // 類別清單（顯示用）：補上「其他」
-    final List<String> categoryOptions = [
-      ...{...widget.categories, '其他'}
-    ];
+    final List<String> categoryOptions = [...{...widget.categories, '其他'}];
+
+    final maxH = MediaQuery.of(context).size.height * 0.90; // ✅ 最多 90% 螢幕高
 
     return AnimatedPadding(
       duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOut,
       padding: EdgeInsets.only(bottom: bottomInset),
-      child: Center(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 560),
-            child: Container(
-              decoration: BoxDecoration(
-                gradient: _brandGradient,
-                borderRadius: BorderRadius.circular(24),
-                boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 18, offset: Offset(0, 12))],
-              ),
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 18),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  // 標題：白色，與外殼對齊（不加底線）
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                    child: Row(
-                      children: [
-                        const Text(
-                          '建立回憶',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 22,
-                            fontWeight: FontWeight.w800,
-                            decoration: TextDecoration.none,
-                          ),
-                        ),
-                        const Spacer(),
-                        IconButton(
-                          icon: const Icon(Icons.close, color: Colors.white),
-                          onPressed: () => Navigator.of(context).pop(false),
-                          splashRadius: 20,
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-
-                  // 表單內容（直接用深藍欄位，已移除黑底）
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        _fieldLabel('回憶標題'),
-                        TextField(
-                          controller: _title,
-                          style: const TextStyle(color: Colors.black, fontSize: 16, fontWeight: FontWeight.w600),
-                          decoration: _whiteFieldBox(hint: '給這段回憶取個名字'),
-                        ),
-                        const SizedBox(height: 12),
-
-                        _fieldLabel('回憶描述'),
-                        TextField(
-                          controller: _desc,
-                          maxLines: 4,
-                          style: const TextStyle(color: Colors.black),
-                          decoration: _whiteFieldBox(hint: '想記下的細節、感受…'),
-                        ),
-
-                        const SizedBox(height: 12),
-                        // 內嵌分類（展開直向列表）
-                        _categoryField(categoryOptions),
-                        const SizedBox(height: 16),
-
-                        // 圖片：可拖曳排序；第一張顯示「封面」
-                        if (_imagePaths.isNotEmpty)
-                          ReorderableWrap(
-                            spacing: 10,
-                            runSpacing: 10,
-                            needsLongPressDraggable: true,
-                            onReorder: (oldIndex, newIndex) {
-                              setState(() {
-                                final item = _imagePaths.removeAt(oldIndex);
-                                _imagePaths.insert(newIndex, item);
-                              });
-                            },
-                            children: List.generate(_imagePaths.length, (i) => _thumbTile(i)),
-                          ),
-                        if (_imagePaths.isNotEmpty) const SizedBox(height: 10),
-
-                        _pillButton(
-                          text: '新增圖片',
-                          icon: Icons.add_photo_alternate,
-                          onPressed: _pickImages,
-                        ),
-
-                        const SizedBox(height: 16),
-
-                        Row(
-                          children: [
-                            Expanded(
-                              child: _pillButton(
-                                text: _isRecording ? '停止錄音' : '開始錄音',
-                                icon: _isRecording ? Icons.stop : Icons.mic,
-                                onPressed: _isRecording ? _stopRec : _startRec,
-                                fg: _isRecording ? Colors.white : _brandBlue,
-                                bg: _isRecording ? Colors.redAccent : Colors.white,
-                              ),
+      child: SafeArea(
+        child: Center(
+          child: Material(
+            color: Colors.transparent,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: 560, maxHeight: maxH),
+              child: Container(
+                decoration: BoxDecoration(
+                  gradient: _brandGradient,
+                  borderRadius: BorderRadius.circular(24),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Colors.black26,
+                      blurRadius: 18,
+                      offset: Offset(0, 12),
+                    )
+                  ],
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // ✅ 固定標題列（不跟著滾動）
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(24, 14, 12, 6),
+                      child: Row(
+                        children: [
+                          const Text(
+                            '建立回憶',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 22,
+                              fontWeight: FontWeight.w800,
+                              decoration: TextDecoration.none,
                             ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              // 白底；未有錄音→灰字；有錄音→藍字
-                              child: _pillButton(
-                                text: '播放錄音',
-                                icon: Icons.play_arrow,
-                                onPressed: _recordedPath == null ? null : _playRecording,
-                                fg: _recordedPath == null ? Colors.black38 : _brandBlue,
-                                bg: Colors.white,
+                          ),
+                          const Spacer(),
+                          IconButton(
+                            icon: const Icon(Icons.close, color: Colors.white),
+                            onPressed: () => Navigator.of(context).pop(false),
+                            splashRadius: 20,
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    // ✅ 內容區：用 Expanded + Scroll，永不 overflow
+                    Expanded(
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.fromLTRB(24, 8, 24, 18),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            _fieldLabel('回憶標題'),
+                            TextField(
+                              controller: _title,
+                              style: const TextStyle(
+                                color: Colors.black,
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
                               ),
+                              decoration: _whiteFieldBox(hint: '給這段回憶取個名字'),
+                            ),
+                            const SizedBox(height: 12),
+
+                            _fieldLabel('回憶描述'),
+                            TextField(
+                              controller: _desc,
+                              maxLines: 4,
+                              style: const TextStyle(color: Colors.black),
+                              decoration: _whiteFieldBox(hint: '想記下的細節、感受…'),
+                            ),
+
+                            const SizedBox(height: 12),
+
+                            _categoryField(categoryOptions),
+                            const SizedBox(height: 16),
+
+                            if (_imagePaths.isNotEmpty)
+                              ReorderableWrap(
+                                spacing: 10,
+                                runSpacing: 10,
+                                needsLongPressDraggable: true,
+                                onReorder: (oldIndex, newIndex) {
+                                  setState(() {
+                                    final item = _imagePaths.removeAt(oldIndex);
+                                    _imagePaths.insert(newIndex, item);
+                                  });
+                                },
+                                children: List.generate(_imagePaths.length, (i) => _thumbTile(i)),
+                              ),
+                            if (_imagePaths.isNotEmpty) const SizedBox(height: 10),
+
+                            _pillButton(
+                              text: '新增圖片',
+                              icon: Icons.add_photo_alternate,
+                              onPressed: _pickImages,
+                            ),
+
+                            const SizedBox(height: 16),
+
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: _pillButton(
+                                    text: _isRecording ? '停止錄音' : '開始錄音',
+                                    icon: _isRecording ? Icons.stop : Icons.mic,
+                                    onPressed: _isRecording ? _stopRec : _startRec,
+                                    fg: _isRecording ? Colors.white : _brandBlue,
+                                    bg: _isRecording ? Colors.redAccent : Colors.white,
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: _pillButton(
+                                    text: '播放錄音',
+                                    icon: Icons.play_arrow,
+                                    onPressed: _recordedPath == null ? null : _playRecording,
+                                    fg: _recordedPath == null ? Colors.black38 : _brandBlue,
+                                    bg: Colors.white,
+                                  ),
+                                ),
+                              ],
+                            ),
+
+                            const SizedBox(height: 22),
+
+                            _primaryCTA(
+                              text: _isSaving ? '儲存中…' : '儲存回憶',
+                              icon: Icons.save_rounded,
+                              onPressed: _isSaving ? null : _save,
                             ),
                           ],
                         ),
-
-                        const SizedBox(height: 22),
-
-                        // 更顯眼的儲存按鈕（白底深藍字）
-                        _primaryCTA(
-                          text: _isSaving ? '儲存中…' : '儲存回憶',
-                          icon: Icons.save_rounded,
-                          onPressed: _isSaving ? null : _save,
-                        ),
-                      ],
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),

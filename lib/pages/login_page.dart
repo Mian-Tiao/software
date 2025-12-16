@@ -21,6 +21,8 @@ class _LoginPageState extends State<LoginPage> {
   }
 
   Future<void> _login() async {
+    debugPrint('✅ login pressed');
+
     final account = _accountController.text.trim();
     final password = _passwordController.text.trim();
     final email = '$account@test.com';
@@ -33,38 +35,53 @@ class _LoginPageState extends State<LoginPage> {
     setState(() => _isLoading = true);
 
     try {
+      debugPrint('➡️ signing in: $email');
       await FirebaseAuth.instance.signInWithEmailAndPassword(
         email: email,
         password: password,
       );
+      debugPrint('✅ signIn success');
 
       final user = FirebaseAuth.instance.currentUser;
+      debugPrint('➡️ currentUser = ${user?.uid}');
+
       if (user != null) {
+        debugPrint('➡️ reading role from firestore');
         final doc = await FirebaseFirestore.instance
             .collection('users')
             .doc(user.uid)
             .get();
+        debugPrint('✅ firestore got doc exists=${doc.exists} data=${doc.data()}');
+
+        if (!mounted) return;
 
         if (doc.exists && doc.data()?['role'] != null) {
           final role = doc['role'];
-          if (!mounted) return;
+          debugPrint('✅ role=$role');
           if (role == 'caregiver') {
             Navigator.pushReplacementNamed(context, '/selectUser');
           } else if (role == 'user') {
             Navigator.pushReplacementNamed(context, '/mainMenu');
+          } else {
+            Navigator.pushReplacementNamed(context, '/role');
           }
         } else {
-          // 若沒有 role 資料，轉到角色選擇頁
-          if (!mounted) return;
           Navigator.pushReplacementNamed(context, '/role');
         }
       }
     } on FirebaseAuthException catch (e) {
+      debugPrint('❌ FirebaseAuthException: ${e.code} ${e.message}');
       _showMessage('登入失敗: ${e.message}');
+    } catch (e, st) {
+      debugPrint('❌ login error: $e');
+      debugPrint(st.toString());
+      _showMessage('登入失敗：$e');
     } finally {
-      if (mounted) setState(() => _isLoading = false);
+      if (!mounted) return;
+      setState(() => _isLoading = false);
     }
   }
+
 
 
   @override
