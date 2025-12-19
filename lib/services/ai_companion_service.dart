@@ -495,7 +495,7 @@ class AICompanionService {
 
   /// （選用）智慧建議
   Future<String?> generateSmartSuggestion(List<String> recentMessages) async {
-    const apiKey = 'AIzaSyCSiUQBqYBaWgpxHr37RcuKoaiiUOUfQhs';
+    const apiKey = 'AIzaSyBzVea4w3TVrTanpKbwZTR4AmPRUH_ZKcw';
     const url =
         'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=$apiKey';
 
@@ -532,7 +532,7 @@ ${recentMessages.join('\n')}
 
   /// 主要聊天：把「改良後提示詞 + 30 分鐘提醒」一起送給 AI
   Future<String?> processUserMessage(String prompt) async {
-    const apiKey = 'AIzaSyCSiUQBqYBaWgpxHr37RcuKoaiiUOUfQhs';
+    const apiKey = 'AIzaSyBzVea4w3TVrTanpKbwZTR4AmPRUH_ZKcw';
     const url =
         'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=$apiKey';
 

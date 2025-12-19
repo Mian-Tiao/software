@@ -226,7 +226,7 @@ class _UserTaskPageState extends State<UserTaskPage> {
   """;
 
     final url = Uri.parse(
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=AIzaSyCSiUQBqYBaWgpxHr37RcuKoaiiUOUfQhs",
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=AIzaSyBzVea4w3TVrTanpKbwZTR4AmPRUH_ZKcw",
     );
 
     final response = await http.post(
