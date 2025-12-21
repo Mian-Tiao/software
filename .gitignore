@@ -51,3 +51,4 @@ dist
 .vscode
 .env
 .env.*
+/android/secrets.properties
