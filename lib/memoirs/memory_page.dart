@@ -33,14 +33,18 @@ class Memory {
     if (imageList is List) {
       imagePaths = imageList.whereType<String>().toList();
     }
+
+    final rawCat = (data['category'] ?? '').toString().trim();
+    final category = rawCat.isEmpty ? '其他' : rawCat;
+
     return Memory(
       id: docId,
       title: data['title'] ?? '',
       description: data['description'] ?? '',
       date: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
       imagePaths: imagePaths,
-      audioPath: data['audioPath'] ?? '',
-      category: data['category'] ?? '',
+      audioPath: (data['audioPath'] ?? '').toString(),
+      category: category, // ✅ 保證不會是空字串
     );
   }
 }
@@ -141,24 +145,54 @@ class _MemoryPageState extends State<MemoryPage> {
 
   Future<void> _loadMemories() async {
     if (_uid == null) return;
-    final snapshot = await FirebaseFirestore.instance
-        .collection('memories')
-        .where('uid', isEqualTo: _uid)
-        .orderBy('createdAt', descending: true)
-        .get();
 
-    final memories = snapshot.docs
-        .map((doc) => Memory.fromFirestore(doc.id, doc.data()))
-        .toList();
+    try {
+      debugPrint('🔎 load memories uid=$_uid');
 
-    if (!mounted) return;
+      final snapshot = await FirebaseFirestore.instance
+          .collection('memories')
+          .where('uid', isEqualTo: _uid)
+          .orderBy('createdAt', descending: true)
+          .get();
 
-    setState(() {
-      _memories
-        ..clear()
-        ..addAll(memories);
-    });
+      final memories = snapshot.docs
+          .map((doc) => Memory.fromFirestore(doc.id, doc.data()))
+          .toList();
+
+      // ✅ 把資料裡真正出現過的分類補到 _categories（避免「其他」/自訂分類看不到）
+      final existed = _categories.toSet();
+      existed.add('其他');
+      for (final m in memories) {
+        final c = m.category.trim().isEmpty ? '其他' : m.category.trim();
+        existed.add(c);
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _memories
+          ..clear()
+          ..addAll(memories);
+
+        // 保留原本順序 + 補新分類到尾端
+        final next = <String>[..._categories];
+        for (final c in existed) {
+          if (!next.contains(c)) next.add(c);
+        }
+        // 確保「其他」一定存在
+        if (!next.contains('其他')) next.add('其他');
+        _categories = next;
+      });
+
+      debugPrint('✅ loaded=${memories.length} categories=$_categories');
+    } catch (e) {
+      debugPrint('❌ load memories error: $e');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('讀取回憶失敗：$e')),
+      );
+    }
   }
+
 
   Future<void> _navigateToAddMemory() async {
     final ok = await showAddMemoryDialog(
@@ -235,7 +269,9 @@ class _MemoryPageState extends State<MemoryPage> {
                   initialCategories: _categories,
                   onCategoriesUpdated: (newCats) {
                     if (!mounted) return;
-                    setState(() => _categories = newCats);
+                    final next = [...newCats];
+                    if (!next.contains('其他')) next.add('其他'); // ✅ 強制保留
+                    setState(() => _categories = next);
                   },
                 ),
               ),
