@@ -49,3 +49,5 @@ build
 dist
 .idea
 .vscode
+.env
+.env.*

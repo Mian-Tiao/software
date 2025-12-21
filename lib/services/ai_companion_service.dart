@@ -8,6 +8,10 @@ import 'package:just_audio/just_audio.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:memory/memoirs/memory_service.dart';
 import 'package:flutter/foundation.dart'; // for debugPrint
+import 'package:flutter_dotenv/flutter_dotenv.dart';
+
+final String geminiApiKey = dotenv.env['GEMINI_API_KEY'] ?? '';
+bool _ttsInited = false;
 
 class AICompanionService {
   final FlutterTts _flutterTts = FlutterTts();
@@ -15,6 +19,23 @@ class AICompanionService {
 
   // 一天內避免重複提醒
   final Set<String> _remindedToday = {};
+
+  Future<void> _initTtsOnce() async {
+    if (_ttsInited) return;
+    await _flutterTts.awaitSpeakCompletion(true);
+    await _flutterTts.setPitch(1.2);
+    await _flutterTts.setSpeechRate(0.45);
+    await _flutterTts.setVolume(1.0);
+
+    // setLanguage 只做一次，避免每次都去 isLanguageAvailable
+    try {
+      await _flutterTts.setLanguage('zh-TW');
+    } catch (_) {
+      // 模擬器/某些裝置會炸，直接忽略，至少不要讓聊天死掉
+    }
+
+    _ttsInited = true;
+  }
 
   /// 讀「今天」任務（支援 dateKey、String、Timestamp）
   Future<List<Map<String, String>>> fetchTodayTasks({bool verbose = true}) async {
@@ -312,11 +333,15 @@ class AICompanionService {
 
   /// AI 說話
   Future<void> speak(String text) async {
-    await _flutterTts.setPitch(1.2);
-    await _flutterTts.setSpeechRate(0.45);
-    await _flutterTts.setVolume(1.0);
-    await _flutterTts.setLanguage('zh-TW');
-    await _flutterTts.speak(text);
+    if (text.trim().isEmpty) return;
+    await _initTtsOnce();
+
+    try {
+      await _flutterTts.stop();
+      await _flutterTts.speak(text);
+    } catch (_) {
+      // TTS 掛掉就別播，不要影響 Gemini 回應流程
+    }
   }
 
   /// 存對話
@@ -495,14 +520,16 @@ class AICompanionService {
 
   /// （選用）智慧建議
   Future<String?> generateSmartSuggestion(List<String> recentMessages) async {
-    const apiKey = 'AIzaSyBzVea4w3TVrTanpKbwZTR4AmPRUH_ZKcw';
-    const url =
-        'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=$apiKey';
+    final url = Uri.https(
+      'generativelanguage.googleapis.com',
+      '/v1beta/models/gemini-2.5-flash-lite:generateContent',
+      {'key': geminiApiKey},
+    );
 
     final prompt = '''
-你是一位溫柔的 AI 陪伴者，請根據以下三句使用者的訊息，生成一句短建議延續對話，繁體中文、10字內、只回純文字：
-${recentMessages.join('\n')}
-''';
+    你是一位溫柔的 AI 陪伴者，請根據以下三句使用者的訊息，生成一句短建議延續對話，繁體中文、10字內、只回純文字：
+    ${recentMessages.join('\n')}
+    ''';
 
     final body = jsonEncode({
       'contents': [
@@ -515,7 +542,7 @@ ${recentMessages.join('\n')}
     });
 
     final response = await http.post(
-      Uri.parse(url),
+      url,
       headers: {'Content-Type': 'application/json'},
       body: body,
     );
@@ -532,9 +559,11 @@ ${recentMessages.join('\n')}
 
   /// 主要聊天：把「改良後提示詞 + 30 分鐘提醒」一起送給 AI
   Future<String?> processUserMessage(String prompt) async {
-    const apiKey = 'AIzaSyBzVea4w3TVrTanpKbwZTR4AmPRUH_ZKcw';
-    const url =
-        'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=$apiKey';
+    final url = Uri.https(
+      'generativelanguage.googleapis.com',
+      '/v1beta/models/gemini-2.5-flash-lite:generateContent',
+      {'key': geminiApiKey},
+    );
 
     final uid = FirebaseAuth.instance.currentUser?.uid;
     String memorySummary = '（尚無回憶紀錄）';
@@ -550,26 +579,26 @@ ${recentMessages.join('\n')}
 
     // ====== 改良後 Prompt（你要的內容都在，並更精準）======
     final systemPrompt = '''
-你是一位溫柔且簡潔的 AI 陪伴者，擅長傾聽與陪伴使用者，幫助他們回憶過去的美好往事，並提醒即將到來的重要任務。
-
-【互動規則】
-1) 當使用者表示要「聽錄音／播放／聽某段記憶」，請先用一句簡短回覆，並緊接輸出一行：
-   [播放回憶錄] 標題: <記憶標題>
-   - 不要輸出網址、完整內容或其它欄位。
-2) 「回憶錄」是**過去**的經歷（錄音、描述）；「行事曆任務」是**未來**事件（吃藥、活動、看診）。不要混淆。
-3) 回覆以 50 字以內、1–2 句自然口語為限；避免冗長與過多標點。
-4) 你無法自行查詢行事曆。系統會提供 TASK_HINT（可能為空）。只有當 TASK_HINT 非空時，請在回覆最後加一個簡短提醒（例如：「小提醒：{TASK_HINT}」）。若為空，請不要主動談任務。
-5) 延續對話脈絡，善用 MEMORY_SUMMARY 的線索；避免重複。
-6) 需要澄清記憶標題時，請用不超過 15 字的一句話詢問。
-
-NOW: $nowStr
-TASK_HINT: ${taskHint ?? ''}
-MEMORY_SUMMARY:
-$memorySummary
-
-使用者說：
-「$prompt」
-''';
+      你是一位溫柔且簡潔的 AI 陪伴者，擅長傾聽與陪伴使用者，幫助他們回憶過去的美好往事，並提醒即將到來的重要任務。
+      
+      【互動規則】
+      1) 當使用者表示要「聽錄音／播放／聽某段記憶」，請先用一句簡短回覆，並緊接輸出一行：
+         [播放回憶錄] 標題: <記憶標題>
+         - 不要輸出網址、完整內容或其它欄位。
+      2) 「回憶錄」是**過去**的經歷（錄音、描述）；「行事曆任務」是**未來**事件（吃藥、活動、看診）。不要混淆。
+      3) 回覆以 50 字以內、1–2 句自然口語為限；避免冗長與過多標點。
+      4) 你無法自行查詢行事曆。系統會提供 TASK_HINT（可能為空）。只有當 TASK_HINT 非空時，請在回覆最後加一個簡短提醒（例如：「小提醒：{TASK_HINT}」）。若為空，請不要主動談任務。
+      5) 延續對話脈絡，善用 MEMORY_SUMMARY 的線索；避免重複。
+      6) 需要澄清記憶標題時，請用不超過 15 字的一句話詢問。
+      
+      NOW: $nowStr
+      TASK_HINT: ${taskHint ?? ''}
+      MEMORY_SUMMARY:
+      $memorySummary
+      
+      使用者說：
+      「$prompt」
+      ''';
 
     final body = jsonEncode({
       'contents': [
@@ -582,7 +611,7 @@ $memorySummary
     });
 
     final response = await http.post(
-      Uri.parse(url),
+      url,
       headers: {'Content-Type': 'application/json'},
       body: body,
     );

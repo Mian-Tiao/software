@@ -8,6 +8,8 @@ import 'dart:async';
 // 👇 新增：通知服務
 import 'package:memory/services/notification_service.dart';
 
+bool _sending = false;
+
 class AICompanionPage extends StatefulWidget {
   const AICompanionPage({super.key});
 
@@ -158,199 +160,244 @@ class _AICompanionPageState extends State<AICompanionPage> with WidgetsBindingOb
   }
 
   Future<void> _sendMessage(String input) async {
-    if (input.trim().isEmpty || _isLoading || !mounted) return;
+    if (!mounted) return;
+
     final text = input.trim();
+    if (text.isEmpty) return;
 
-    setState(() {
-      _messages.add({'role': 'user', 'text': text});
-      _isLoading = true;
-    });
-    _controller.clear();
-    await _scrollToBottom();
+    // ✅ 防止連點/重入
+    if (_sending) return;
+    _sending = true;
 
-    // -------- A) 先用本地邏輯處理（不走 AI，省流量）--------
-    final lower = text.toLowerCase();
+    // ✅ 小工具：背景副作用（不阻塞 UI）
+    Future<void> _afterReplySideEffects({
+      required String userText,
+      required String aiText,
+      bool allowMemoryPlay = true,
+    }) async {
+      // ✅ 0) 先存 Firestore（最重要，放第一）
+      try {
+        await _service
+            .saveToFirestore(userText, aiText)
+            .timeout(const Duration(seconds: 8));
+      } catch (e) {
+        debugPrint('❌ saveToFirestore failed: $e');
+      }
 
-    // A-1) 今天任務查詢（優先提醒未完成 / 即將到來的任務）
-    final asksTodayTasks = (text.contains('今天') || text.contains('今日')) &&
-        (text.contains('任務') || text.contains('要做') || text.contains('行程') || text.contains('提醒'));
-    if (asksTodayTasks || text == '提醒我今天要做的事') {
-      final tasks = await _service.fetchTodayTasks();
+      // ✅ 1) 背景通知（不重要，失敗就算了）
+      try {
+        if (!_inForeground && aiText.isNotEmpty) {
+          final body = aiText.length > 80 ? '${aiText.substring(0, 80)}…' : aiText;
+          await NotificationService.showNow(
+            id: DateTime.now().millisecondsSinceEpoch % 100000,
+            title: 'AI 陪伴回覆了',
+            body: body,
+            payload: 'route:/ai',
+          );
+        }
+      } catch (_) {}
 
-      String reply;
-      if (tasks.isEmpty) {
-        reply = '今天沒有排定任務。';
-      } else {
-        // 過濾未完成任務
-        final now = DateTime.now();
-        final pendingTasks = tasks.where((t) {
-          final done = (t['done'] ?? '').toLowerCase() == 'true';
-          return !done; // 只要未完成
-        }).toList();
+      // ✅ 2) 播回憶（可能卡死：加 timeout）
+      if (allowMemoryPlay) {
+        try {
+          bool playedByExplicitBlock = false;
 
-        if (pendingTasks.isEmpty) {
-          reply = '今天的任務都已完成，做得很棒！';
-        } else {
-          // 檢查是否有即將到來或正在進行的任務
-          String? urgent;
-          for (final t in pendingTasks) {
-            DateTime? start;
-            try {
-              start = DateFormat('HH:mm').parseStrict(t['time'] ?? '');
-              start = DateTime(now.year, now.month, now.day, start.hour, start.minute);
-            } catch (_) {}
+          if (aiText.contains('[播放回憶')) {
+            final full = RegExp(
+              r'\[播放回憶錄?\][\s\S]*?標題[:：]\s*(.*?)\s+描述[:：]\s*(.*?)\s+音檔[:：]\s*(\S+)',
+              dotAll: true,
+            ).firstMatch(aiText);
 
-            if (start != null) {
-              final diff = start.difference(now).inMinutes;
-              if (diff >= 0 && diff <= 60) {
-                urgent = '提醒您，一小時內有任務：${t['task']}（${t['time']}）';
-                break;
+            if (full != null) {
+              final url = full.group(3);
+              if (url != null && url.isNotEmpty) {
+                await _service
+                    .playMemoryAudioFromUrl(url)
+                    .timeout(const Duration(seconds: 8));
+                playedByExplicitBlock = true;
               }
-              if (now.isAfter(start) && now.difference(start).inMinutes <= 30) {
-                urgent = '現在正在進行：${t['task']}（${t['time']}）';
-                break;
+            } else {
+              final titleOnly = RegExp(
+                r'\[播放回憶錄?\][\s\S]*?標題[:：]\s*(.+)',
+                dotAll: true,
+              ).firstMatch(aiText);
+
+              final t = titleOnly?.group(1)?.trim();
+              if (t != null && t.isNotEmpty) {
+                final ok = await _service
+                    .playMemoryAudioIfMatch('[播放回憶錄] 標題: $t')
+                    .timeout(const Duration(seconds: 8), onTimeout: () => false);
+                if (ok) playedByExplicitBlock = true;
               }
             }
           }
 
-          if (urgent != null) {
-            reply = urgent;
-          } else {
-            reply = '今天尚未完成的任務有：${pendingTasks.map((t) => '${t['time']}：${t['task']}').join('；')}';
+          if (!playedByExplicitBlock) {
+            final recentTexts = _messages.map((m) => m['text'] ?? '').toList();
+            final last5 = recentTexts.length > 5
+                ? recentTexts.sublist(recentTexts.length - 5)
+                : recentTexts;
+            final ctxForMatch = [...last5, userText, aiText].join('\n');
+
+            await _service
+                .playMemoryAudioIfMatch(ctxForMatch)
+                .timeout(const Duration(seconds: 8), onTimeout: () => false);
           }
+        } catch (_) {}
+      }
+
+      // ✅ 3) TTS（最容易卡：一定要 timeout）
+      try {
+        final speakText = aiText
+            .replaceAll('[播放回憶]', '')
+            .replaceAll('[播放回憶錄]', '')
+            .trim();
+
+        if (speakText.isNotEmpty) {
+          await _service
+              .speak(speakText)
+              .timeout(const Duration(seconds: 10));
         }
-      }
-
-      if (!mounted) return;
-      setState(() => _messages.add({'role': 'ai', 'text': reply}));
-
-      // 👇 新增：這也是 AI 回覆，在背景時推通知
-      if (!_inForeground && reply.isNotEmpty) {
-        final body = reply.length > 80 ? '${reply.substring(0, 80)}…' : reply;
-        await NotificationService.showNow(
-          id: DateTime.now().millisecondsSinceEpoch % 100000,
-          title: 'AI 陪伴回覆了',
-          body: body,
-          payload: 'route:/ai',
-        );
-      }
-
-      await _service.speak(reply);
-      await _service.saveToFirestore(text, reply);
-
-      setState(() => _isLoading = false);
-      await _scrollToBottom();
-      return;
+      } catch (_) {}
     }
 
-    // A-2) 播放 / 重播回憶（語意比對）
-    final isReplay = lower.contains('再播') || lower.contains('重播') || lower.contains('再聽') || text == '再播一次剛剛的回憶';
-    final isPlayMemory = lower.contains('播放') && (lower.contains('回憶') || lower.contains('錄音'));
-    if (isReplay || isPlayMemory) {
-      final ok = await _service.playMemoryAudioIfMatch(text);
-      if (ok) {
-        const reply = '已為你播放回憶。';
-        if (!mounted) return;
-        setState(() => _messages.add({'role': 'ai', 'text': reply}));
+    try {
+      // ✅ 開始轉圈 + 先顯示 user 泡泡
+      setState(() {
+        _messages.add({'role': 'user', 'text': text});
+        _isLoading = true;
+      });
+      _controller.clear();
+      await _scrollToBottom();
 
-        // 👇 新增：背景時推通知
-        if (!_inForeground) {
-          await NotificationService.showNow(
-            id: DateTime.now().millisecondsSinceEpoch % 100000,
-            title: 'AI 陪伴回覆了',
-            body: reply,
-            payload: 'route:/ai',
-          );
+      final lower = text.toLowerCase();
+
+      // -------- A) 本地：今天任務（不走 Gemini）--------
+      final asksTodayTasks = (text.contains('今天') || text.contains('今日')) &&
+          (text.contains('任務') || text.contains('要做') || text.contains('行程') || text.contains('提醒'));
+
+      if (asksTodayTasks || text == '提醒我今天要做的事') {
+        final tasks = await _service.fetchTodayTasks();
+
+        String reply;
+        if (tasks.isEmpty) {
+          reply = '今天沒有排定任務。';
+        } else {
+          final now = DateTime.now();
+          final pendingTasks = tasks.where((t) {
+            final done = (t['done'] ?? '').toLowerCase() == 'true';
+            return !done;
+          }).toList();
+
+          if (pendingTasks.isEmpty) {
+            reply = '今天的任務都已完成，做得很棒！';
+          } else {
+            String? urgent;
+            for (final t in pendingTasks) {
+              DateTime? start;
+              try {
+                final tm = DateFormat('HH:mm').parseStrict(t['time'] ?? '');
+                start = DateTime(now.year, now.month, now.day, tm.hour, tm.minute);
+              } catch (_) {}
+
+              if (start != null) {
+                final diff = start.difference(now).inMinutes;
+                if (diff >= 0 && diff <= 60) {
+                  urgent = '提醒您，一小時內有任務：${t['task']}（${t['time']}）';
+                  break;
+                }
+                if (now.isAfter(start) && now.difference(start).inMinutes <= 30) {
+                  urgent = '現在正在進行：${t['task']}（${t['time']}）';
+                  break;
+                }
+              }
+            }
+
+            reply = urgent ??
+                '今天尚未完成的任務有：${pendingTasks.map((t) => '${t['time']}：${t['task']}').join('；')}';
+          }
         }
 
-        await _service.speak(reply);
-        await _service.saveToFirestore(text, reply);
+        if (!mounted) return;
 
-        setState(() => _isLoading = false);
+        // ✅ 回覆一出現就停轉圈（關鍵）
+        setState(() {
+          _messages.add({'role': 'ai', 'text': reply});
+          _isLoading = false;
+        });
         await _scrollToBottom();
+
+        // ✅ 背景做：通知/TTS/存檔（不阻塞）
+        unawaited(_afterReplySideEffects(userText: text, aiText: reply, allowMemoryPlay: false));
         return;
       }
-    }
 
-    // -------- B) 真的需要聊天才丟給 AI --------
-    // 取最近 3 則 user 對話當作上下文
-    final history = _messages.where((m) => m['role'] == 'user').map((m) => m['text']!).toList();
-    final last3 = history.length > 3 ? history.sublist(history.length - 3) : history;
-    final recentContext = [...last3, text].join('\n');
+      // -------- A-2) 本地：播放/重播回憶 --------
+      final isReplay = lower.contains('再播') || lower.contains('重播') || lower.contains('再聽') || text == '再播一次剛剛的回憶';
+      final isPlayMemory = lower.contains('播放') && (lower.contains('回憶') || lower.contains('錄音'));
 
-    final reply = await _service.processUserMessage(recentContext);
-    if (reply != null) {
-      if (!mounted) return;
-      setState(() => _messages.add({'role': 'ai', 'text': reply}));
+      if (isReplay || isPlayMemory) {
+        final ok = await _service.playMemoryAudioIfMatch(text);
+        if (ok) {
+          const reply = '已為你播放回憶。';
+          if (!mounted) return;
 
-      // 👇 新增：AI 一般回覆，背景時推通知
-      if (!_inForeground && reply.isNotEmpty) {
-        final body = reply.length > 80 ? '${reply.substring(0, 80)}…' : reply;
-        await NotificationService.showNow(
-          id: DateTime.now().millisecondsSinceEpoch % 100000,
-          title: 'AI 陪伴回覆了',
-          body: body,
-          payload: 'route:/ai',
-        );
-      }
+          // ✅ 立刻停轉圈
+          setState(() {
+            _messages.add({'role': 'ai', 'text': reply});
+            _isLoading = false;
+          });
+          await _scrollToBottom();
 
-      // -------- C) 播放回憶：解析更寬鬆 + 語意後備 --------
-      bool playedByExplicitBlock = false;
-
-      if (reply.contains('[播放回憶')) {
-        // 完整三段（標題/描述/音檔）
-        final full = RegExp(
-          r'\[播放回憶錄?\][\s\S]*?標題[:：]\s*(.*?)\s+描述[:：]\s*(.*?)\s+音檔[:：]\s*(\S+)',
-          dotAll: true,
-        ).firstMatch(reply);
-
-        if (full != null) {
-          final url = full.group(3);
-          if (url != null && url.isNotEmpty) {
-            await _service.playMemoryAudioFromUrl(url);
-            playedByExplicitBlock = true;
-          }
-        } else {
-          // 只有標題（常見）
-          final titleOnly = RegExp(
-            r'\[播放回憶錄?\][\s\S]*?標題[:：]\s*(.+)',
-            dotAll: true,
-          ).firstMatch(reply);
-          final t = titleOnly?.group(1)?.trim();
-          if (t != null && t.isNotEmpty) {
-            final ok = await _service.playMemoryAudioIfMatch('[播放回憶錄] 標題: $t');
-            if (ok) playedByExplicitBlock = true;
-          } else {
-            debugPrint('⚠️ 無法解析播放回憶資訊');
-          }
+          // ✅ 背景做：通知/TTS/存檔（不阻塞）
+          unawaited(_afterReplySideEffects(userText: text, aiText: reply, allowMemoryPlay: false));
+          return;
         }
       }
 
-      if (!playedByExplicitBlock) {
-        // 語意後備：用最近 5 則對話 + 本次輸入 + AI 回覆做比對
-        final recentTexts = _messages.map((m) => m['text'] ?? '').toList();
-        final last5 = recentTexts.length > 5
-            ? recentTexts.sublist(recentTexts.length - 5)
-            : recentTexts;
-        final ctxForMatch = [...last5, text, reply].join('\n');
-        await _service.playMemoryAudioIfMatch(ctxForMatch);
-      }
+      // -------- B) 需要聊天才丟 Gemini --------
+      // ✅ 你前面已經把 text 加進 _messages 了，所以 recentContext 不要再 append text 一次
+      final history = _messages
+          .where((m) => m['role'] == 'user')
+          .map((m) => m['text']!)
+          .toList();
+      final last3 = history.length > 3 ? history.sublist(history.length - 3) : history;
+      final recentContext = last3.join('\n');
 
-      final speakText = reply
-          .replaceAll('[播放回憶]', '')
-          .replaceAll('[播放回憶錄]', '')
-          .trim();
-      if (speakText.isNotEmpty) {
-        await _service.speak(speakText);
-      }
+      final replyRaw = await _service.processUserMessage(recentContext);
+      final reply = (replyRaw == null || replyRaw.trim().isEmpty)
+          ? '我現在有點忙（AI 額度可能用完了），我們等等再聊好嗎？'
+          : replyRaw.trim();
 
-      await _service.saveToFirestore(text, reply);
+      if (!mounted) return;
+
+      // ✅ 回覆一出現就停轉圈（關鍵）
+      setState(() {
+        _messages.add({'role': 'ai', 'text': reply});
+        _isLoading = false;
+      });
+      await _scrollToBottom();
+
+      // ✅ 背景做：通知/播回憶/TTS/存檔（不阻塞）
+      unawaited(_afterReplySideEffects(userText: text, aiText: reply, allowMemoryPlay: true));
+    } catch (_) {
+      if (!mounted) return;
+
+      setState(() {
+        _messages.add({'role': 'ai', 'text': '剛剛連線有點不穩，我們等一下再試～'});
+        _isLoading = false;
+      });
+      await _scrollToBottom();
+    } finally {
+      _sending = false;
+
+      // ✅ 保險：不管哪裡炸掉都不要一直轉
+      if (mounted && _isLoading) {
+        setState(() => _isLoading = false);
+      }
     }
-
-    if (!mounted) return;
-    setState(() => _isLoading = false);
-    await _scrollToBottom();
   }
+
 
   @override
   void dispose() {
@@ -493,7 +540,6 @@ class _AICompanionPageState extends State<AICompanionPage> with WidgetsBindingOb
 
   @override
   Widget build(BuildContext context) {
-    final screenHeight = MediaQuery.of(context).size.height;
 
     return Scaffold(
       backgroundColor: const Color(0xFFEAF6FB),
@@ -501,10 +547,9 @@ class _AICompanionPageState extends State<AICompanionPage> with WidgetsBindingOb
         child: Column(
           children: [
             SizedBox(
-              height: screenHeight / 9,
+              height: 92, // ✅ 固定高度，避免 3px overflow
               child: Stack(
                 children: [
-                  // 左上返回鍵
                   Positioned(
                     top: 0,
                     left: 0,
@@ -517,19 +562,17 @@ class _AICompanionPageState extends State<AICompanionPage> with WidgetsBindingOb
                       },
                     ),
                   ),
-
-                  // 中間 LOGO + 標題
                   Align(
                     alignment: Alignment.center,
                     child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
+                      mainAxisSize: MainAxisSize.min, // ✅ 重要：避免撐滿造成溢位
                       children: [
-                        Image.asset('assets/images/memory_icon.png', width: 60),
-                        const SizedBox(height: 4),
+                        Image.asset('assets/images/memory_icon.png', width: 54),
+                        const SizedBox(height: 2), // ✅ 間距縮小
                         const Text(
                           'AI 陪伴',
                           style: TextStyle(
-                            fontSize: 27, // ✅ 放大
+                            fontSize: 26,
                             fontWeight: FontWeight.bold,
                             color: Color(0xFF5B8EFF),
                           ),
