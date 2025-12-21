@@ -1,3 +1,11 @@
+import java.util.Properties
+
+val secrets = Properties()
+val secretsFile = rootProject.file("secrets.properties")
+if (secretsFile.exists()) {
+    secretsFile.inputStream().use { secrets.load(it) }
+}
+
 plugins {
     id("com.android.application")
     id("com.google.gms.google-services")
@@ -6,6 +14,15 @@ plugins {
 }
 
 android {
+    defaultConfig {
+        // 先讀 secrets.properties，沒有就讀環境變數
+        val mapsKey = (secrets["GOOGLE_MAPS_API_KEY"] as String?)
+            ?: System.getenv("GOOGLE_MAPS_API_KEY")
+            ?: ""
+
+        manifestPlaceholders["googleMapsApiKey"] = mapsKey
+    }
+
     namespace = "com.example.memory"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = "29.0.13599879"

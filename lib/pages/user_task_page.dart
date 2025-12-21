@@ -8,11 +8,13 @@ import 'monthly_overview_page.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:memory/caregivers/caregiver_session.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 //import 'package:memory/services/notification_service.dart';
 
 const _gradStart = Color(0xFF62C2FF); // 藍
 const _gradEnd   = Color(0xFF59F2D8); // 綠
 const _headerBg  = Color(0xFFF5F7FB);
+final String geminiApiKey = dotenv.env['GEMINI_API_KEY'] ?? '';
 
 Future<void> uploadTasksToFirebase(Map<String, List<Map<String, String>>> taskMap, String uid) async {
   final user = FirebaseAuth.instance.currentUser;
@@ -77,6 +79,7 @@ class _UserTaskPageState extends State<UserTaskPage> {
   void initState() {
     super.initState();
     final user = FirebaseAuth.instance.currentUser;
+    debugPrint("✅ UserTask initState reached");
     uid = widget.targetUid ?? user?.uid ?? '';
     loadTasksFromFirebase();
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -140,6 +143,8 @@ class _UserTaskPageState extends State<UserTaskPage> {
 
     await taskRef.delete();
   }
+
+  DateTime? _lastMicTap;
 
   Future<void> _listen(Function(String task, String? startTime, String? endTime, String? date, String? type) onResult) async {
     if (!_isListening) {
@@ -225,8 +230,10 @@ class _UserTaskPageState extends State<UserTaskPage> {
     請直接給我 JSON 回應。
   """;
 
-    final url = Uri.parse(
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=AIzaSyCSiUQBqYBaWgpxHr37RcuKoaiiUOUfQhs",
+    final url = Uri.https(
+      'generativelanguage.googleapis.com',
+      '/v1beta/models/gemini-2.5-flash-lite:generateContent',
+      {'key': geminiApiKey},
     );
 
     final response = await http.post(
@@ -296,6 +303,7 @@ class _UserTaskPageState extends State<UserTaskPage> {
       }
     } else {
       debugPrint("❌ Gemini API 錯誤：${response.statusCode}");
+      debugPrint("❌ body: ${response.body}");
     }
 
     return null;

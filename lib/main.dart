@@ -16,6 +16,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'services/notification_service.dart';
 import 'caregivers/map.dart';
 import 'services/background_tasks.dart'; // 👈 新增
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 /// 全域 navigatorKey：讓通知點擊時能在這裡做導頁
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
@@ -56,6 +57,7 @@ Future<void> _initAndWireNotifications() async {
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await NotificationService.init();                 // 只初始化，不要請權限
+  await dotenv.load(fileName: ".env");
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
